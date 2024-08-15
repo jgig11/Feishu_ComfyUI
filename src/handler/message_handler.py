@@ -40,7 +40,7 @@ class MessageHandler:
             return None
         messageCard["open_ids"] = [openId]
         print(f'模    块: message_handler - handle_update_message_card')
-#        print(f'当前VAE: {sd_webui.get_sd_vae}')
+        #        print(f'当前VAE: {sd_webui.get_sd_vae}')
         return message_sender.update_message_card(token, messageCard)
 
     def queue_prompt(self,comfy_prompt):
@@ -48,7 +48,7 @@ class MessageHandler:
         data = json.dumps(p).encode('utf-8')
         req =  urllib.request.Request("http://{}/prompt?token={}".format(server_address, TOKEN), data=data)
         return json.loads(urllib.request.urlopen(req).read())
-    
+
     def get_image(self,filename, subfolder, folder_type):
         data = {"filename": filename, "subfolder": subfolder, "type": folder_type}
         url_values = urllib.parse.urlencode(data)
@@ -59,7 +59,11 @@ class MessageHandler:
     def get_history(self,prompt_id):
         with urllib.request.urlopen("http://{}/history/{}?token={}".format(server_address, prompt_id, TOKEN)) as response:
             return json.loads(response.read())
-         
+
+    def get_queue(self):
+        req = urllib.request.Request("http://{}/queue".format(server_address))
+        return json.loads(urllib.request.urlopen(req).read().decode("utf-8"))
+
     def get_images(self,ws, prompt):
         prompt_id = self.queue_prompt(prompt)['prompt_id']
         output_images = {}
@@ -92,7 +96,7 @@ class MessageHandler:
         gen_cfg.update_from_json(sd_webui.parse_prompts_args(prompts)) #处理prompt串
         prompt_input = gen_cfg.prompt
         print (f'PPPPPPPPrompt: {prompt_input}')
-        
+
         comfy_json = """
 
           {
@@ -282,14 +286,38 @@ class MessageHandler:
         comfy_prompt["61"]["inputs"]["prompt"] =   pre_prompt
         print (f'CCCCCCCCCCComfy_prompt:{comfy_prompt}')
 
-        #set the seed for our KSampler node
-        comfy_prompt["25"]["inputs"]["noise_seed"] = random.randint(0, 1000000000000000)            
+        # set the seed for our KSampler node
+        comfy_prompt["25"]["inputs"]["noise_seed"] = random.randint(0, 1000000000000000)
 
         result = self.queue_prompt(comfy_prompt)
         print(f"Resultzzzzzzzzzzzzzzzzzzzzzzzzzzzzz: {result}")
         prompt_id = result['prompt_id']
         print(f"Prompt ID: {prompt_id}")
-        time.sleep(30)
+        # 先倒头就睡0.5秒，确保任务提交到队列
+        time.sleep(0.5)
+
+        while True:
+            queue = self.get_queue()
+            prompt_finish_flag = True
+            if len(queue["queue_running"]) == 0:
+                break
+
+            for item in queue["queue_running"]:
+                if len(item) > 0 and item[1] == prompt_id:
+                    prompt_finish_flag = False
+                    continue
+
+            for item in queue["queue_pending"]:
+                if len(item) > 0 and item[1] == prompt_id:
+                    prompt_finish_flag = False
+                    continue
+
+            if not prompt_finish_flag:
+                print("Prompt not finished yet. Sleeping for 2 seconds.")
+                time.sleep(2)
+            else:
+                break
+
         info = self.get_history(prompt_id)
         history = info[prompt_id]
         output_images = {}
@@ -327,7 +355,7 @@ class MessageHandler:
                 images_key.append(upload_image(img_data))
         else:
             print("Error: 'images' key not found in result")
-        
+
         return handle_image_card({'model': 'abcd','infotexts': []}, images_key, prompts)
 
         # print(f"XXXX_images_key_XXXXXX: {result['info'], images_key, prompts}")
@@ -336,7 +364,7 @@ class MessageHandler:
     def handle_message(self, myevent: MyReceiveEvent):
         message_sender.send_text_message(myevent,"ComfyUI正在处理您的请求，请稍等")
 
-        print(f'模    块: messageCard:{self.handle_prompt(myevent.text)}') 
+        print(f'模    块: messageCard:{self.handle_prompt(myevent.text)}')
         messageCard = self.handle_prompt(myevent.text)
 
         return message_sender.send_message_card(myevent, messageCard)
